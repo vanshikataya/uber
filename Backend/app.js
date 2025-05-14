@@ -7,6 +7,8 @@ const cookieParser = require('cookie-parser');
 const mongoose = require('mongoose');
 const connectToDb = require('./db/db');
 const userRoutes = require('./routes/user.routes');
+const captainRoutes = require('./routes/captain.routes');   
+
 
 
 connectToDb();
@@ -16,11 +18,15 @@ app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
 
+
 app.get('/', (req, res) => {
     res.send('Hello World!');
 });
 
+
 app.use('/users', require('./routes/user.routes')); 
+app.use('/captains',captainRoutes);
+
 
 
 module.exports = app;
