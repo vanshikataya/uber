@@ -87,5 +87,5 @@ captainSchema.statics.hashPassword = async function (password) {
 }   
 
 
-const captainModel = mongoose.model('captain', captainSchema);
+const captainModel = mongoose.model('Captain', captainSchema);
 module.exports = captainModel;

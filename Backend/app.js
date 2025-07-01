@@ -8,7 +8,7 @@ const mongoose = require('mongoose');
 const connectToDb = require('./db/db');
 const userRoutes = require('./routes/user.routes');
 const captainRoutes = require('./routes/captain.routes');   
-
+const mapsRoutes = require('./routes/maps.routes'); 
 
 
 connectToDb();
@@ -26,7 +26,7 @@ app.get('/', (req, res) => {
 
 app.use('/users', require('./routes/user.routes')); 
 app.use('/captains',captainRoutes);
-
+app.use('/maps', mapsRoutes);
 
 
 module.exports = app;
