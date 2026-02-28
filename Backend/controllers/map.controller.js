@@ -48,6 +48,23 @@ module.exports.getAutoCompleteSuggestions = async (req, res) => {
     res.status(200).json(suggestions);
   } catch (err) {
     console.error("❌ Error fetching autocomplete suggestions:", err.response?.data || err.message);
-    res.status(500).json({ message: 'Failed to fetch autocomplete suggestions', error: err.message });
+    res.status(500).json({ message: 'Failed to fetch suggestions', error: err.message });
+  }
+};
+
+module.exports.getRouteGeometry = async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() });
+  }
+
+  const { pickup, destination } = req.query;
+
+  try {
+    const routeData = await mapService.getRouteGeometry(pickup, destination);
+    res.status(200).json(routeData);
+  } catch (err) {
+    console.error("❌ Error fetching route geometry:", err.response?.data || err.message);
+    res.status(500).json({ message: 'Failed to fetch route', error: err.message });
   }
 };

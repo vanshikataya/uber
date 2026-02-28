@@ -117,3 +117,31 @@ module.exports.getCaptainsInTheRadius = async (lat, lng, radius) => {
 
   return captains;
 };
+
+// 🔹 Get full route geometry (for drawing on map)
+module.exports.getRouteGeometry = async (pickup, destination) => {
+  if (!pickup || !destination) {
+    throw new Error('Pickup and destination are required');
+  }
+
+  const ori = typeof pickup === 'string' ? await module.exports.getAddressCoordinate(pickup) : pickup;
+  const dest = typeof destination === 'string' ? await module.exports.getAddressCoordinate(destination) : destination;
+
+  const o = `${ori.lng},${ori.lat}`;
+  const d = `${dest.lng},${dest.lat}`;
+  const url = `https://router.project-osrm.org/route/v1/driving/${o};${d}?overview=full&geometries=geojson`;
+  const resp = await axios.get(url);
+  if (!resp.data.routes || resp.data.routes.length === 0) {
+    throw new Error('No route found');
+  }
+  const route = resp.data.routes[0];
+  // Convert GeoJSON [lng,lat] to [lat,lng] for Leaflet
+  const coordinates = route.geometry.coordinates.map(([lng, lat]) => [lat, lng]);
+  return {
+    coordinates,
+    pickup: ori,
+    destination: dest,
+    distance: route.legs[0].distance,
+    duration: route.legs[0].duration
+  };
+};

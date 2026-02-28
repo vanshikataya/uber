@@ -23,5 +23,12 @@ router.get('/get-suggestions',
     mapController.getAutoCompleteSuggestions
 )
 
+router.get('/get-route',
+    query('pickup').isString().isLength({ min: 3 }),
+    query('destination').isString().isLength({ min: 3 }),
+    authMiddleware.authUser,
+    mapController.getRouteGeometry
+)
+
 
 module.exports = router;

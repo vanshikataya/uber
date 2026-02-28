@@ -2,11 +2,13 @@ import React from 'react'
 
 const VehiclePanel = (props) => {
     return (
-        <div>
-            <h5 className='p-1 text-center w-[93%] absolute top-0' onClick={() => {
+        <div className='relative'>
+            <div className='flex justify-center w-full py-2 cursor-pointer' onClick={() => {
                 props.setVehiclePanel(false)
-            }}><i className="text-3xl text-gray-200 ri-arrow-down-wide-line"></i></h5>
-            <h3 className='text-2xl font-semibold mb-5'>Choose a Vehicle</h3>
+            }}>
+                <div className='w-10 h-1.5 bg-gray-300 rounded-full'></div>
+            </div>
+            <h3 className='text-2xl font-semibold mb-5 px-1'>Choose a Vehicle</h3>
             <div onClick={() => {
                 props.setConfirmRidePanel(true)
                 props.selectVehicle('car')
