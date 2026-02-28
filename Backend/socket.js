@@ -40,6 +40,24 @@ function initializeSocket(server) {
                     lng: location.lng
                 }
             });
+
+            // Relay captain location to any user on an active ride with this captain
+            const rideModel = require('./models/ride.model');
+            try {
+                const activeRide = await rideModel.findOne({
+                    captain: userId,
+                    status: { $in: ['accepted', 'ongoing'] }
+                }).populate('user');
+
+                if (activeRide && activeRide.user && activeRide.user.socketId) {
+                    io.to(activeRide.user.socketId).emit('captain-location-update', {
+                        lat: location.ltd,
+                        lng: location.lng
+                    });
+                }
+            } catch (err) {
+                console.log('Error relaying captain location:', err.message);
+            }
         });
 
         socket.on('disconnect', () => {

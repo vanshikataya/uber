@@ -24,6 +24,7 @@ const home = () => {
     const waitingForDriverRef = useRef(null)
     const panelRef = useRef(null)
     const panelCloseRef = useRef(null)
+    const panelOpenRef = useRef(null)
     const [ vehiclePanel, setVehiclePanel ] = useState(false)
     const [ confirmRidePanel, setConfirmRidePanel ] = useState(false)
     const [ vehicleFound, setVehicleFound ] = useState(false)
@@ -34,60 +35,140 @@ const home = () => {
     const [ fare, setFare ] = useState({})
     const [ vehicleType, setVehicleType ] = useState(null)
     const [ ride, setRide ] = useState(null)
+    const [driverMarker, setDriverMarker] = useState(null)
+    const pickupTimerRef = useRef(null)
+    const destinationTimerRef = useRef(null)
 
     const navigate = useNavigate()
 
     const { socket } = useContext(SocketContext)
     const { user } = useContext(UserDataContext)
 
+    // Debug: log driverMarker changes
+    useEffect(() => {
+        console.log('🎯 driverMarker state updated:', driverMarker)
+    }, [driverMarker])
+
     useEffect(() => {
         socket.emit("join", { userType: "user", userId: user._id })
     }, [ user ])
 
-    socket.on('ride-confirmed', ride => {
-
-
-        setVehicleFound(false)
-        setWaitingForDriver(true)
-        setRide(ride)
-    })
-
-    socket.on('ride-started', ride => {
-        console.log("ride")
-        setWaitingForDriver(false)
-        navigate('/riding', { state: { ride } }) // Updated navigate to include ride data
-    })
-
-
-    const handlePickupChange = async (e) => {
-        setPickup(e.target.value)
-        try {
-            const response = await axios.get(`${import.meta.env.VITE_BASE_URL}/maps/get-suggestions`, {
-                params: { input: e.target.value },
-                headers: {
-                    Authorization: `Bearer ${localStorage.getItem('token')}`
+    useEffect(() => {
+        const handleRideConfirmed = (ride) => {
+            setVehicleFound(false)
+            setWaitingForDriver(true)
+            setRide(ride)
+            // set driver marker if captain location provided
+            try {
+                const cap = ride.captain || ride.captainDetails || ride.driver
+                if (cap) {
+                    let lat, lng
+                    if (cap.location && cap.location.ltd) {
+                        // Captain model uses 'ltd' for latitude
+                        lat = cap.location.ltd
+                        lng = cap.location.lng
+                    } else if (cap.location && cap.location.coordinates) {
+                        // GeoJSON [lng, lat]
+                        lng = cap.location.coordinates[0]
+                        lat = cap.location.coordinates[1]
+                    } else if (cap.location && cap.location.lat && cap.location.lng) {
+                        lat = cap.location.lat
+                        lng = cap.location.lng
+                    }
+                    if (lat && lng) setDriverMarker({ lat, lng, popup: cap.fullname?.firstname || 'Driver' })
                 }
-
-            })
-            setPickupSuggestions(response.data)
-        } catch {
-            // handle error
+            } catch (e) {
+                console.warn('Could not set driver marker', e)
+            }
         }
+
+        const handleCaptainLocation = (data) => {
+            if (data && typeof data.lat === 'number' && typeof data.lng === 'number') {
+                setDriverMarker(prev => ({
+                    lat: data.lat,
+                    lng: data.lng,
+                    popup: prev?.popup || 'Driver'
+                }));
+            }
+        }
+
+        const handleRideStarted = (ride) => {
+            setWaitingForDriver(false)
+            navigate('/riding', { state: { ride } })
+        }
+
+        socket.on('ride-confirmed', handleRideConfirmed)
+        socket.on('captain-location-update', handleCaptainLocation)
+        socket.on('ride-started', handleRideStarted)
+
+        return () => {
+            socket.off('ride-confirmed', handleRideConfirmed)
+            socket.off('captain-location-update', handleCaptainLocation)
+            socket.off('ride-started', handleRideStarted)
+        }
+    }, [socket, navigate])
+
+
+    const handlePickupChange = (e) => {
+        const val = e.target.value;
+        setPickup(val);
+        
+        // Clear previous timer
+        if (pickupTimerRef.current) clearTimeout(pickupTimerRef.current);
+        
+        if (val.length < 3) {
+            setPickupSuggestions([]);
+            return;
+        }
+        
+        // Debounce: wait 500ms before making API call
+        pickupTimerRef.current = setTimeout(() => {
+            (async () => {
+                try {
+                    const response = await axios.get(`${import.meta.env.VITE_BASE_URL}/maps/get-suggestions`, {
+                        params: { input: val },
+                        headers: {
+                            Authorization: `Bearer ${localStorage.getItem('token')}`
+                        }
+                    });
+                    setPickupSuggestions(response.data);
+                } catch (err) {
+                    console.warn('Pickup suggestions error:', err.message);
+                    setPickupSuggestions([]);
+                }
+            })();
+        }, 500);
     }
 
-    const handleDestinationChange = async (e) => {
-        setDestination(e.target.value)
-        try {
-            const response = await axios.get(`${import.meta.env.VITE_BASE_URL}/maps/get-suggestions`, {
-                params: { input: e.target.value },
-                headers: {
-                    Authorization: `Bearer ${localStorage.getItem('token')}`
-                }
-            })
-            setDestinationSuggestions(response.data)
-        } catch {
-            // handle error
+    const handleDestinationChange = (e) => {
+        const val = e.target.value;
+        setDestination(val);
+        
+        // Clear previous timer
+        if (destinationTimerRef.current) clearTimeout(destinationTimerRef.current);
+        
+        if (val.length < 3) {
+            setDestinationSuggestions([]);
+            return;
         }
+        
+        // Debounce: wait 500ms before making API call
+        destinationTimerRef.current = setTimeout(() => {
+            (async () => {
+                try {
+                    const response = await axios.get(`${import.meta.env.VITE_BASE_URL}/maps/get-suggestions`, {
+                        params: { input: val },
+                        headers: {
+                            Authorization: `Bearer ${localStorage.getItem('token')}`
+                        }
+                    });
+                    setDestinationSuggestions(response.data);
+                } catch (err) {
+                    console.warn('Destination suggestions error:', err.message);
+                    setDestinationSuggestions([]);
+                }
+            })();
+        }, 500);
     }
 
     const submitHandler = (e) => {
@@ -104,6 +185,9 @@ const home = () => {
             gsap.to(panelCloseRef.current, {
                 opacity: 1
             })
+            gsap.to(panelOpenRef.current, {
+                opacity: 0
+            })
         } else {
             gsap.to(panelRef.current, {
                 height: '0%',
@@ -112,6 +196,9 @@ const home = () => {
             })
             gsap.to(panelCloseRef.current, {
                 opacity: 0
+            })
+            gsap.to(panelOpenRef.current, {
+                opacity: 1
             })
         }
     }, [ panelOpen ])
@@ -165,22 +252,106 @@ const home = () => {
         }
     }, [ waitingForDriver ])
 
+    // Demo: auto-accept ride after 3 seconds (for testing without real captains)
+    useEffect(() => {
+        if (!vehicleFound) return
+        const timeout = setTimeout(() => {
+            console.log('🎬 DEMO: Auto-accepting ride after 3 seconds...')
+            const mockRide = {
+                _id: 'mock-ride-' + Date.now(),
+                pickup,
+                destination,
+                fare: fare[vehicleType],
+                vehicleType,
+                captain: {
+                    fullname: { firstname: 'Demo', lastname: 'Driver' },
+                    vehicle: { plate: 'DL-01-AB-1234', type: vehicleType },
+                    rating: 4.8,
+                },
+                status: 'confirmed',
+                otp: '1234'
+            }
+            setRide(mockRide)
+            
+            // Ensure driver marker is set (use cached currentPosition or geolocation)
+            const setMarker = (lat, lng) => {
+                console.log('📍 Auto-accept: Setting driver marker at', { lat, lng, popup: 'Driver (heading to pickup)' })
+                setDriverMarker({ lat, lng, popup: 'Driver (heading to pickup)' })
+            }
+
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    (pos) => {
+                        const newLat = pos.coords.latitude + 0.005
+                        const newLng = pos.coords.longitude + 0.005
+                        setMarker(newLat, newLng)
+                    },
+                    (err) => {
+                        console.warn('⚠️ Auto-accept geolocation failed:', err.message)
+                        // Fallback to Delhi area
+                        setMarker(28.6139, 77.2090)
+                    }
+                )
+            } else {
+                // No geolocation, use fallback
+                setMarker(28.6139, 77.2090)
+            }
+            
+            setVehicleFound(false)
+            setWaitingForDriver(true)
+            console.log('✅ DEMO: Ride confirmed with mock driver:', mockRide)
+        }, 3000)
+
+        return () => clearTimeout(timeout)
+    }, [vehicleFound, pickup, destination, vehicleType, fare])
+
+
 
     async function findTrip() {
         setVehiclePanel(true)
         setPanelOpen(false)
+        console.log('🚗 Find Trip clicked - vehicle panel should open')
 
-        const response = await axios.get(`${import.meta.env.VITE_BASE_URL}/rides/get-fare`, {
-            params: { pickup, destination },
-            headers: {
-                Authorization: `Bearer ${localStorage.getItem('token')}`
+        try {
+            const response = await axios.get(`${import.meta.env.VITE_BASE_URL}/rides/get-fare`, {
+                params: { pickup, destination },
+                headers: {
+                    Authorization: `Bearer ${localStorage.getItem('token')}`
+                }
+            })
+            setFare(response.data)
+            console.log('📍 Fare fetched:', response.data)
+        } catch (err) {
+            console.error('❌ Fare fetch failed:', err?.response?.status || err.message)
+        }
+
+        // simulate a nearby driver marker so user sees a driver on the map immediately
+        try {
+            if (navigator.geolocation) {
+                console.log('📡 Requesting geolocation...')
+                navigator.geolocation.getCurrentPosition(
+                    (pos) => {
+                        const lat = pos.coords.latitude + 0.01
+                        const lng = pos.coords.longitude + 0.01
+                        console.log('✅ Geolocation success - setting driver marker at', { lat, lng })
+                        setDriverMarker({ lat, lng, popup: 'Driver (simulated)' })
+                    },
+                    (err) => {
+                        // fallback: use a visible offset from known coordinates
+                        console.warn('⚠️ Geolocation denied/failed:', err.message)
+                        const fallbackMarker = { lat: 28.6139, lng: 77.2090, popup: 'Driver (simulated - fallback)' }
+                        console.log('🚨 Using fallback coordinates:', fallbackMarker)
+                        setDriverMarker(fallbackMarker)
+                    }
+                )
+            } else {
+                console.warn('❌ Geolocation not supported')
+                const fallbackMarker = { lat: 28.6139, lng: 77.2090, popup: 'Driver (simulated - fallback)' }
+                setDriverMarker(fallbackMarker)
             }
-        })
-
-
-        setFare(response.data)
-
-
+        } catch (e) {
+            console.error('simulate driver failed', e)
+        }
     }
 
     async function createRide() {
@@ -199,17 +370,24 @@ const home = () => {
 
     return (
         <div className='h-screen relative overflow-hidden'>
-            <img className='w-16 absolute left-5 top-5' src="https://upload.wikimedia.org/wikipedia/commons/c/cc/Uber_logo_2018.png" alt="" />
-            <div className='h-screen w-screen'>
-                {/* image for temporary use  */}
-                <LiveTracking />
+            <img className='w-16 absolute left-5 top-5 z-30' src="https://upload.wikimedia.org/wikipedia/commons/c/cc/Uber_logo_2018.png" alt="" />
+            {/* map container behind everything */}
+            <div className='absolute inset-0 z-0'>
+                <LiveTracking markers={driverMarker ? [driverMarker] : []} />
             </div>
-            <div className=' flex flex-col justify-end h-screen absolute top-0 w-full'>
-                <div className='h-[30%] p-6 bg-white relative'>
+
+            {/* overlay panels and inputs */}
+            <div className='absolute inset-0 flex flex-col justify-end z-20'>
+                <div className='h-[30%] p-6 bg-white relative z-30'>
                     <h5 ref={panelCloseRef} onClick={() => {
                         setPanelOpen(false)
-                    }} className='absolute opacity-0 right-6 top-6 text-2xl'>
+                    }} className='absolute right-6 top-6 text-2xl cursor-pointer z-40 opacity-0'>
                         <i className="ri-arrow-down-wide-line"></i>
+                    </h5>
+                    <h5 ref={panelOpenRef} onClick={() => {
+                        setPanelOpen(true)
+                    }} className='absolute right-6 top-6 text-2xl cursor-pointer z-40 opacity-100'>
+                        <i className="ri-arrow-up-wide-line"></i>
                     </h5>
                     <h4 className='text-2xl font-semibold'>Find a trip</h4>
                     <form className='relative py-3' onSubmit={(e) => {
@@ -244,7 +422,7 @@ const home = () => {
                         Find Trip
                     </button>
                 </div>
-                <div ref={panelRef} className='bg-white h-0'>
+                <div ref={panelRef} className='bg-white h-0 overflow-auto z-30'>
                     <LocationSearchPanel
                         suggestions={activeField === 'pickup' ? pickupSuggestions : destinationSuggestions}
                         setPanelOpen={setPanelOpen}
@@ -255,12 +433,34 @@ const home = () => {
                     />
                 </div>
             </div>
-            <div ref={vehiclePanelRef} className='fixed w-full z-10 bottom-0 translate-y-full bg-white px-3 py-10 pt-12'>
+            <div ref={vehiclePanelRef} className='fixed w-full z-20 bottom-0 translate-y-full bg-white px-3 py-10 pt-12'>
                 <VehiclePanel
                     selectVehicle={setVehicleType}
                     fare={fare} setConfirmRidePanel={setConfirmRidePanel} setVehiclePanel={setVehiclePanel} />
             </div>
-            <div ref={confirmRidePanelRef} className='fixed w-full z-10 bottom-0 translate-y-full bg-white px-3 py-6 pt-12'>
+
+            {/* Find Trip fixed button (visible when panel open or suggestions shown) */}
+            {(panelOpen && !vehiclePanel && !confirmRidePanel && !vehicleFound && !waitingForDriver) && (
+                <div className='fixed left-6 right-6 bottom-28 z-50'>
+                    <button
+                        onClick={findTrip}
+                        className='bg-black text-white px-4 py-3 rounded-lg w-full shadow-lg'
+                    >
+                        Find Trip
+                    </button>
+                </div>
+            )}
+
+            {/* bottom-center handle */}
+            {!panelOpen && (
+                <div
+                    onClick={() => setPanelOpen(true)}
+                    className='fixed bottom-6 left-1/2 transform -translate-x-1/2 z-40 bg-white p-2 rounded-full shadow-lg cursor-pointer'
+                >
+                    <i className='ri-arrow-up-s-line text-3xl'></i>
+                </div>
+            )}
+            <div ref={confirmRidePanelRef} className='fixed w-full z-30 bottom-0 translate-y-full bg-white px-3 py-6 pt-12'>
                 <ConfirmRide
                     createRide={createRide}
                     pickup={pickup}
@@ -268,9 +468,9 @@ const home = () => {
                     fare={fare}
                     vehicleType={vehicleType}
 
-                    setConfirmRidePanel={setConfirmRidePanel} setVehicleFound={setVehicleFound} />
+                    setConfirmRidePanel={setConfirmRidePanel} setVehicleFound={setVehicleFound} setDriverMarker={setDriverMarker} />
             </div>
-            <div ref={vehicleFoundRef} className='fixed w-full z-10 bottom-0 translate-y-full bg-white px-3 py-6 pt-12'>
+            <div ref={vehicleFoundRef} className='fixed w-full z-30 bottom-0 translate-y-full bg-white px-3 py-6 pt-12'>
                 <LookingForDriver
                     createRide={createRide}
                     pickup={pickup}
@@ -279,7 +479,7 @@ const home = () => {
                     vehicleType={vehicleType}
                     setVehicleFound={setVehicleFound} />
             </div>
-            <div ref={waitingForDriverRef} className='fixed w-full  z-10 bottom-0  bg-white px-3 py-6 pt-12'>
+            <div ref={waitingForDriverRef} className='fixed w-full z-30 bottom-0 bg-white px-3 py-6 pt-12'>
                 <WaitingForDriver
                     ride={ride}
                     setVehicleFound={setVehicleFound}

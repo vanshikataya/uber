@@ -1,101 +1,119 @@
 const axios = require('axios');
 const captainModel = require('../models/captain.model');
 
-const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+// ======== OpenStreetMap / OSRM implementation ========
 
-// 🔹 Get coordinates for an address
+// 📍 Nominatim requires a User-Agent header (policy):
+const headers = { 'User-Agent': 'uber-clone/1.0 (+https://yourapp.example.com)' };
+
+// Simple cache for autocomplete suggestions to reduce API calls (5 min TTL)
+const suggestionCache = {};
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+const getCacheKey = (input) => `suggestions_${input.toLowerCase()}`;
+const isCacheValid = (timestamp) => Date.now() - timestamp < CACHE_TTL;
+
+// 🔹 Geocode (address → lat/lng) and autocomplete using Nominatim
 module.exports.getAddressCoordinate = async (address) => {
-    if (!address) throw new Error("Address is required");
+  if (!address) throw new Error('Address is required');
 
-    const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${apiKey}`;
-
-    try {
-        const response = await axios.get(url);
-        console.log("📍 Geocode API response:", response.data);
-
-        if (response.data.status === 'OK') {
-            const location = response.data.results[0].geometry.location;
-            return {
-                lat: location.lat, // ✅ fixed typo (was ltd)
-                lng: location.lng
-            };
-        } else {
-            throw new Error(response.data.error_message || `Geocode API Error: ${response.data.status}`);
-        }
-    } catch (error) {
-        console.error("❌ Error in getAddressCoordinate:", error.message);
-        throw new Error("Unable to fetch coordinates");
-    }
+  const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(address)}`;
+  const resp = await axios.get(url, { headers });
+  if (!resp.data || resp.data.length === 0) {
+    throw new Error('No results from geocoder');
+  }
+  const { lat, lon } = resp.data[0];
+  return { lat: parseFloat(lat), lng: parseFloat(lon) };
 };
 
-// 🔹 Get distance and duration between two points
-module.exports.getDistanceTime = async (origin, destination) => {
-    if (!origin || !destination) {
-        throw new Error('Origin and destination are required');
-    }
-
-    const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${encodeURIComponent(origin)}&destinations=${encodeURIComponent(destination)}&key=${apiKey}`;
-
-    try {
-        const response = await axios.get(url);
-        console.log("📍 Distance Matrix API response:", response.data);
-
-        if (response.data.status === 'OK') {
-            const element = response.data.rows[0].elements[0];
-
-            if (element.status === 'ZERO_RESULTS') {
-                throw new Error('No routes found between origin and destination');
-            }
-
-            return element; // { distance: {text, value}, duration: {text, value}, status }
-        } else {
-            throw new Error(response.data.error_message || `Distance Matrix API Error: ${response.data.status}`);
-        }
-    } catch (err) {
-        console.error("❌ Error in getDistanceTime:", err.message);
-        throw new Error("Unable to fetch distance and time");
-    }
-};
-
-// 🔹 Get autocomplete suggestions
 module.exports.getAutoCompleteSuggestions = async (input) => {
-    if (!input) {
-        throw new Error('Query is required');
+  if (!input) throw new Error('Query is required');
+
+  const cacheKey = getCacheKey(input);
+  
+  // Check cache first
+  if (suggestionCache[cacheKey] && isCacheValid(suggestionCache[cacheKey].timestamp)) {
+    console.log(`✅ Cache hit for "${input}"`);
+    return suggestionCache[cacheKey].data;
+  }
+
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=5&q=${encodeURIComponent(input)}`;
+    const resp = await axios.get(url, { headers });
+    const suggestions = resp.data.map(place => place.display_name).filter(Boolean);
+    
+    // Store in cache
+    suggestionCache[cacheKey] = {
+      data: suggestions,
+      timestamp: Date.now()
+    };
+    
+    console.log(`📡 Nominatim query for "${input}" - cached ${suggestions.length} results`);
+    return suggestions;
+  } catch (error) {
+    // If Nominatim fails (e.g., rate limit), return cached data if available
+    if (suggestionCache[cacheKey]) {
+      console.log(`⚠️ Nominatim error, returning stale cache for "${input}"`);
+      return suggestionCache[cacheKey].data;
     }
-
-    const url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(input)}&key=${apiKey}`;
-
-    try {
-        const response = await axios.get(url);
-        console.log("📍 Places Autocomplete API response:", response.data);
-
-        if (response.data.status === 'OK') {
-            return response.data.predictions
-                .map(prediction => prediction.description)
-                .filter(Boolean);
-        } else {
-            throw new Error(response.data.error_message || `Places API Error: ${response.data.status}`);
-        }
-    } catch (err) {
-        console.error("❌ Error in getAutoCompleteSuggestions:", err.message);
-        throw new Error("Unable to fetch suggestions");
-    }
+    throw error;
+  }
 };
 
-// 🔹 Get captains within a radius
-module.exports.getCaptainsInTheRadius = async (lat, lng, radius) => {
-    if (!lat || !lng || !radius) {
-        throw new Error("Latitude, longitude and radius are required");
+// 🔹 Distance & travel time using OSRM public service
+module.exports.getDistanceTime = async (origin, destination) => {
+  if (!origin || !destination) throw new Error('Origin and destination are required');
+
+  // helper: convert whatever we got into {lat,lng}
+  const toLatLng = async (p) => {
+    if (p && typeof p === 'object' && p.lat != null && p.lng != null) {
+      return p;
     }
 
-    // radius in km
-    const captains = await captainModel.find({
-        location: {
-            $geoWithin: {
-                $centerSphere: [[lng, lat], radius / 6371] // ✅ Mongo expects [lng, lat], not [lat, lng]
-            }
-        }
-    });
+    if (typeof p === 'string') {
+      // if string looks like coords "lng,lat" or "lat,lng" allow
+      const match = p.match(/^-?\d+(?:\.\d+)?,\s*-?\d+(?:\.\d+)?$/);
+      if (match) {
+        const parts = p.split(',').map(s => parseFloat(s.trim()));
+        // assume order lng,lat for OSRM URLs
+        return { lat: parts[1], lng: parts[0] };
+      }
+      // otherwise treat as address and geocode
+      return await module.exports.getAddressCoordinate(p);
+    }
 
-    return captains;
+    throw new Error('Invalid origin/destination format');
+  };
+
+  const ori = await toLatLng(origin);
+  const dest = await toLatLng(destination);
+  const o = `${ori.lng},${ori.lat}`;
+  const d = `${dest.lng},${dest.lat}`;
+  const url = `https://router.project-osrm.org/route/v1/driving/${o};${d}?overview=false`;
+  const resp = await axios.get(url);
+  if (!resp.data.routes || resp.data.routes.length === 0) {
+    throw new Error('No route found');
+  }
+  const leg = resp.data.routes[0].legs[0];
+  return {
+    distance: { text: `${(leg.distance / 1000).toFixed(1)} km`, value: leg.distance },
+    duration: { text: `${Math.ceil(leg.duration / 60)} mins`, value: leg.duration }
+  };
+};
+
+// 🔹 Get captains within a radius (unchanged)
+module.exports.getCaptainsInTheRadius = async (lat, lng, radius) => {
+  if (!lat || !lng || !radius) {
+    throw new Error('Latitude, longitude and radius are required');
+  }
+
+  const captains = await captainModel.find({
+    location: {
+      $geoWithin: {
+        $centerSphere: [[lng, lat], radius / 6371]
+      }
+    }
+  });
+
+  return captains;
 };

@@ -1,9 +1,10 @@
-import React, { useRef, useState } from 'react'
+import React, { useRef, useState, useEffect } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import FinishRide from '../components/FinishRide'
 import { useGSAP } from '@gsap/react'
 import gsap from 'gsap'
 import LiveTracking from '../components/LiveTracking'
+import axios from 'axios'
 
 const CaptainRiding = () => {
 
@@ -11,6 +12,33 @@ const CaptainRiding = () => {
     const finishRidePanelRef = useRef(null)
     const location = useLocation()
     const rideData = location.state?.ride
+    const [destinationMarker, setDestinationMarker] = useState(null)
+
+    // Geocode the ride destination to show it on the map
+    useEffect(() => {
+        if (!rideData?.destination) return;
+
+        const geocodeDestination = async () => {
+            try {
+                const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(rideData.destination)}`;
+                const resp = await axios.get(url, {
+                    headers: { 'User-Agent': 'uber-clone/1.0' }
+                });
+                if (resp.data && resp.data.length > 0) {
+                    const { lat, lon } = resp.data[0];
+                    setDestinationMarker({
+                        lat: parseFloat(lat),
+                        lng: parseFloat(lon),
+                        popup: `Destination: ${rideData.destination}`
+                    });
+                }
+            } catch (err) {
+                console.warn('Could not geocode destination:', err.message);
+            }
+        };
+
+        geocodeDestination();
+    }, [rideData?.destination]);
 
 
 
@@ -55,7 +83,7 @@ const CaptainRiding = () => {
             </div>
 
             <div className='h-screen fixed w-screen top-0 z-[-1]'>
-                <LiveTracking />
+                <LiveTracking markers={destinationMarker ? [destinationMarker] : []} />
             </div>
 
         </div>

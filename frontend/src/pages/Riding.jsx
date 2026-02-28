@@ -1,6 +1,6 @@
 import React from 'react'
 import { Link, useLocation } from 'react-router-dom' // Added useLocation
-import { useEffect, useContext } from 'react'
+import { useState, useEffect, useContext } from 'react'
 import { SocketContext } from '../context/SocketContext'
 import { useNavigate } from 'react-router-dom'
 import LiveTracking from '../components/LiveTracking'
@@ -10,19 +10,53 @@ const Riding = () => {
     const { ride } = location.state || {} // Retrieve ride data
     const { socket } = useContext(SocketContext)
     const navigate = useNavigate()
+    const [driverMarker, setDriverMarker] = useState(null)
 
-    socket.on("ride-ended", () => {
-        navigate('/home')
-    })
+    // Set initial driver marker from ride data
+    useEffect(() => {
+        if (ride?.captain?.location) {
+            const loc = ride.captain.location;
+            // Captain model uses 'ltd' not 'lat'
+            const lat = loc.ltd || loc.lat;
+            const lng = loc.lng;
+            if (lat && lng) {
+                setDriverMarker({ lat, lng, popup: `${ride.captain.fullname?.firstname || 'Driver'}` });
+            }
+        }
+    }, [ride]);
+
+    // Listen for real-time captain location updates
+    useEffect(() => {
+        if (!socket) return;
+
+        const handleLocationUpdate = (data) => {
+            if (data && typeof data.lat === 'number' && typeof data.lng === 'number') {
+                setDriverMarker({ lat: data.lat, lng: data.lng, popup: `${ride?.captain?.fullname?.firstname || 'Driver'}` });
+            }
+        };
+
+        socket.on('captain-location-update', handleLocationUpdate);
+
+        return () => {
+            socket.off('captain-location-update', handleLocationUpdate);
+        };
+    }, [socket, ride]);
+
+    useEffect(() => {
+        if (!socket) return;
+        const handleRideEnded = () => navigate('/home');
+        socket.on('ride-ended', handleRideEnded);
+        return () => socket.off('ride-ended', handleRideEnded);
+    }, [socket, navigate]);
 
 
     return (
         <div className='h-screen'>
-            <Link to='/home' className='fixed right-2 top-2 h-10 w-10 bg-white flex items-center justify-center rounded-full'>
+            <Link to='/home' className='fixed right-2 top-2 h-10 w-10 bg-white flex items-center justify-center rounded-full z-10'>
                 <i className="text-lg font-medium ri-home-5-line"></i>
             </Link>
             <div className='h-1/2'>
-                <LiveTracking />
+                <LiveTracking markers={driverMarker ? [driverMarker] : []} />
 
             </div>
             <div className='h-1/2 p-4'>

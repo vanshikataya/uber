@@ -34,9 +34,34 @@ const ConfirmRide = (props) => {
                     </div>
                 </div>
                 <button onClick={() => {
+                    console.log('✅ Confirm button clicked')
+                    // Set driver marker BEFORE triggering auto-accept flow
+                    if (navigator.geolocation && props.setDriverMarker) {
+                        navigator.geolocation.getCurrentPosition(
+                            (position) => {
+                                const lat = position.coords.latitude + 0.01;
+                                const lng = position.coords.longitude + 0.01;
+                                console.log('📍 ConfirmRide: Setting driver marker:', { lat, lng })
+                                props.setDriverMarker({ lat, lng, popup: 'Driver (simulated)' });
+                            },
+                            (err) => {
+                                // Fallback position (New Delhi area)
+                                console.warn('⚠️ Geolocation failed in ConfirmRide:', err.message)
+                                const fallback = { lat: 28.6139, lng: 77.2090, popup: 'Driver (simulated - fallback)' }
+                                console.log('🚨 ConfirmRide: Using fallback marker:', fallback)
+                                props.setDriverMarker(fallback);
+                            }
+                        );
+                    } else {
+                        console.warn('⚠️ Geolocation not available or setDriverMarker missing')
+                        // Set a default driver position anyway
+                        props.setDriverMarker({ lat: 28.6139, lng: 77.2090, popup: 'Driver (simulated)' });
+                    }
+
                     props.setVehicleFound(true)
                     props.setConfirmRidePanel(false)
                     props.createRide()
+                    console.log('🚗 Ride creation initiated')
 
                 }} className='w-full mt-5 bg-green-600 text-white font-semibold p-2 rounded-lg'>Confirm</button>
             </div>
